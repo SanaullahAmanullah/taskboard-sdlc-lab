@@ -33,13 +33,13 @@
 10045	Source Code Disclosure	FAIL
 10047	HTTPS Content Available via HTTP	FAIL
 10048	Remote File Inclusion	FAIL
-10049	Cacheability and Retrievability	IGNORE
+10049	Non-Storable Content	IGNORE
 10050	Retrieved from Cache	WARN
 10051	Relative Path Confusion	WARN
 10052	X-ChromeLogger-Data	WARN
 10053	Apache Range Header DoS	IGNORE
 10054	Cookie without SameSite Attribute	FAIL
-10055	CSP	IGNORE
+10055	CSP: Failure to Define Directive with No Fallback	IGNORE
 10056	X-Debug-Token	FAIL
 10057	Hash Disclosure	WARN
 10058	GET for POST	WARN
@@ -66,7 +66,7 @@
 90001	Insecure JSF ViewState	FAIL
 90002	Java Serialization	FAIL
 90003	SMT Header Injection	FAIL
-90004	ELMAH Information Leak	IGNORE
+90004	Cross-Origin-Embedder-Policy Header Missing or Invalid	IGNORE
 # Actions:
 # Adjust for your own application.
 #   FAIL  — Block the pipeline (confirmed vulnerability)
