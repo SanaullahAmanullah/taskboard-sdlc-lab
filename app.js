@@ -1,32 +1,50 @@
 // ============================================================
-// TASKBOARD — Step 3: Fix SQL Injection + Plaintext Passwords
+// TASKBOARD — Step 4: Fix RBAC + Cookie Security + Security Headers
 // ============================================================
 // Fixed:
-//   ✅ Parameterized queries — SQL injection blocked
-//   ✅ bcrypt password hashing — plaintext passwords gone
-//   ✅ SESSION_SECRET from env — no hardcoded secret
-//
-// Still vulnerable (will fix in later steps):
-//   ❌ No RBAC — any logged-in user can still access /admin
-//   ❌ No session regeneration after login
-//   ❌ Session cookie missing HttpOnly, secure, sameSite
-//   ❌ No security headers (X-Powered-By still exposed)
+//   ✅ Parameterized queries — SQL injection blocked (Step 3)
+//   ✅ bcrypt password hashing (Step 3)
+//   ✅ SESSION_SECRET from env (Step 3)
+//   ✅ RBAC — requireAdmin middleware blocks regular users (Step 4)
+//   ✅ Session regeneration after login (Step 4)
+//   ✅ Cookie flags: HttpOnly, secure, sameSite (Step 4)
+//   ✅ Security headers via Helmet (Step 4)
 // ============================================================
 
 const sqlite3 = require("sqlite3").verbose();
 const express = require("express");
 const bcrypt = require("bcrypt");
 const session = require("express-session");
+const helmet = require("helmet");
 
 const app = express();
 const PORT = 3000;
 const SALT_ROUNDS = 12;
 
-// ✅ FIXED: Secret from environment, not hardcoded
 if (!process.env.SESSION_SECRET) {
     console.error("SESSION_SECRET environment variable is required");
     process.exit(1);
 }
+
+// ── Security Headers ───────────────────────────────────────
+app.disable("x-powered-by");
+
+app.use(
+    helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'"],
+                imgSrc: ["'self'", "data:"],
+                objectSrc: ["'none'"],
+                frameAncestors: ["'none'"],
+                upgradeInsecureRequests: [],
+            },
+        },
+        referrerPolicy: { policy: "no-referrer" },
+    })
+);
 
 // ── Database Setup ──────────────────────────────────────────
 const db = new sqlite3.Database("./taskboard.db");
@@ -36,12 +54,10 @@ db.serialize(() => {
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
-            password TEXT,    -- ✅ Now stores bcrypt hash, not plaintext
+            password TEXT,
             role TEXT
         )
     `);
-
-    // ✅ FIXED: Passwords hashed with bcrypt before storage
     createDefaultUsers();
 });
 
@@ -63,18 +79,56 @@ async function createDefaultUsers() {
     }
 }
 
-// ── Middleware ──────────────────────────────────────────────
+// ── Session Configuration ───────────────────────────────────
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// ⚠️ STILL VULNERABLE: Cookie flags not set yet
 app.use(
     session({
+        name: "taskboard.sid",
         secret: process.env.SESSION_SECRET,
         resave: false,
-        saveUninitialized: true,  // ⚠️ Will fix in Step 5
+        saveUninitialized: false,
+        cookie: {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 30 * 60 * 1000, // 30 minutes
+        },
     })
 );
+
+// ── Auth Middleware ─────────────────────────────────────────
+
+/**
+ * requireAuth — blocks unauthenticated users.
+ * Call this on any route that requires a logged-in user.
+ * Put it BEFORE the route handler in the middleware chain.
+ */
+function requireAuth(req, res, next) {
+    if (!req.session.user) {
+        return res.status(401).send("Authentication required");
+    }
+    next();
+}
+
+/**
+ * requireAdmin — blocks non-admin users.
+ * Call this AFTER requireAuth on admin-only routes.
+ * requireAuth runs first, so req.session.user is guaranteed to exist.
+ *
+ * This is RBAC (Role-Based Access Control):
+ * - Authentication answers "who are you?" (requireAuth)
+ * - Authorization answers "are you allowed to do this?" (requireAdmin)
+ * - They are separate concerns. Never combine them into one check.
+ */
+function requireAdmin(req, res, next) {
+    if (req.session.user.role !== "admin") {
+        return res.status(403).send("Forbidden");
+    }
+    next();
+}
 
 // ── Routes ──────────────────────────────────────────────────
 
@@ -91,68 +145,62 @@ app.get("/", (req, res) => {
     `);
 });
 
-// ✅ FIXED: Parameterized query + bcrypt comparison
 app.post("/login", (req, res) => {
     const { username, password } = req.body;
 
-    // ✅ Parameterized query — SQL injection impossible
     db.get(
         "SELECT * FROM users WHERE username = ?",
         [username],
         async (err, user) => {
-            if (err) {
-                return res.status(500).send("Database error");
-            }
+            if (err) return res.status(500).send("Database error");
+            if (!user) return res.status(401).send("Invalid credentials");
 
-            if (!user) {
-                return res.status(401).send("Invalid credentials");
-            }
-
-            // ✅ bcrypt comparison — compares hash, not plaintext
             const valid = await bcrypt.compare(password, user.password);
+            if (!valid) return res.status(401).send("Invalid credentials");
 
-            if (!valid) {
-                return res.status(401).send("Invalid credentials");
-            }
+            // ✅ FIXED: Regenerate session ID after login
+            // This prevents session fixation — old session ID becomes invalid
+            req.session.regenerate((err) => {
+                if (err) return res.status(500).send("Session error");
 
-            // ⚠️ STILL VULNERABLE: No session regeneration
-            req.session.user = {
-                id: user.id,
-                username: user.username,
-                role: user.role,
-            };
+                req.session.user = {
+                    id: user.id,
+                    username: user.username,
+                    role: user.role,
+                };
 
-            res.send(`
-                <h2>Welcome ${user.username}</h2>
-                <p>Role: ${user.role}</p>
-                <a href="/admin">Admin Dashboard</a><br><br>
-                <form action="/logout" method="POST">
-                    <button>Logout</button>
-                </form>
-            `);
+                res.send(`
+                    <h2>Welcome ${user.username}</h2>
+                    <p>Role: ${user.role}</p>
+                    <a href="/admin">Admin Dashboard</a><br><br>
+                    <form action="/logout" method="POST">
+                        <button>Logout</button>
+                    </form>
+                `);
+            });
         }
     );
 });
 
-// ⚠️ STILL VULNERABLE: No RBAC — any logged-in user can access /admin
-app.get("/admin", (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send("Authentication required");
-    }
-
+// ✅ FIXED: requireAuth → requireAdmin chain
+// requireAuth blocks unauthenticated users (401)
+// requireAdmin blocks non-admin users (403)
+// Only admins reach the route handler
+app.get("/admin", requireAuth, requireAdmin, (req, res) => {
     res.send(`
         <h1>Admin Dashboard</h1>
         <p>Welcome ${req.session.user.username}</p>
-        <p>Sensitive admin data would be here.</p>
+        <p>Only administrators can access this page.</p>
         <form action="/logout" method="POST">
             <button>Logout</button>
         </form>
     `);
 });
 
-app.post("/logout", (req, res) => {
+app.post("/logout", requireAuth, (req, res) => {
     req.session.destroy((err) => {
         if (err) return res.status(500).send("Logout failed");
+        res.clearCookie("taskboard.sid");
         res.redirect("/");
     });
 });
