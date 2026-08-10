@@ -1,18 +1,72 @@
-# Secure SDLC Lab — A Pipeline You Can Fork
+# Secure SDLC Lab — Scan Any Repo in One Command
 
-**The fastest way to learn security engineering: build a vulnerable app, threat model it, fix it, and automate every check so the fixes stick.** This repo is the finished product. The commit history is the tutorial.
+```bash
+# Clone once, scan anything — forever
+git clone https://github.com/SanaullahAmanullah/taskboard-sdlc-lab.git
+cd taskboard-sdlc-lab
+./scan.sh /path/to/any/repo
+```
 
-The app here is a Node.js login page. But the app doesn't matter — you can swap in your own. What matters is the methodology: **threat model → fix → automate → verify**. That works for any stack.
+That's it. It auto-detects the language, picks the right scanners, and tells you what's wrong. Point it at a Node.js app, a Python API, a Java monolith — same command, same six scanners, adapted automatically.
+
+**This repo is two things:**
+1. A **universal scanner** (`scan.sh`) that runs 6 security tools against any codebase
+2. A **learning lab** (commit history + threat model) showing how to build secure software from scratch
+
+The app included here (TaskBoard — a Node.js login page) is just the example. The methodology and the scanner work for anything.
 
 ---
 
-## Quick Start
+## Quick Start — Scan Your Own Repo
 
 ```bash
+# Prerequisites (one-time)
+brew install gitleaks semgrep trivy   # macOS
+# or: pip install semgrep && apt install gitleaks trivy
+
+# Clone the scanner
 git clone https://github.com/SanaullahAmanullah/taskboard-sdlc-lab.git
 cd taskboard-sdlc-lab
-npm install
-export SESSION_SECRET="anything-random-here"
+
+# Point it at ANY repo
+./scan.sh /path/to/your/project
+./scan.sh ~/projects/my-python-api
+./scan.sh ~/work/enterprise-java-app --quick    # skip slow scanners
+./scan.sh . --scanner=secret-scan               # run just one
+
+# Want DAST too?
+./scan.sh /path/to/running-app --with-dast
+```
+
+### What it auto-detects
+
+| Signal | Detection |
+|---|---|
+| `package.json` | JavaScript/Node.js → Semgrep `p/javascript`, Trivy npm |
+| `requirements.txt` / `pyproject.toml` | Python → Semgrep `p/python`, Trivy pip |
+| `pom.xml` / `build.gradle` | Java → Semgrep `p/java`, Trivy pom/gradle |
+| `composer.json` | PHP |
+| `go.mod` | Go |
+| `Cargo.toml` | Rust |
+| `Dockerfile` | Container scan enabled |
+| `app.py` / `manage.py` | DAST start command auto-detected |
+
+### Override with config
+
+Drop `.sec-sdlc.yml` in your repo to customize:
+
+```yaml
+language: python                    # override auto-detect
+semgrep:
+  exclude_rules:                    # false positives you've reviewed
+    - python.django.security...
+skip:
+  - container-scan                  # no Dockerfile
+dast:
+  start_command: "flask run"        # custom startup
+```
+
+
 node app.js
 # → http://localhost:3000
 # Login: admin / admin123   or   user / user123
@@ -144,32 +198,17 @@ The pipeline works for anything that runs in Docker. The five Trivy scanners and
 
 ---
 
-## Running Individual Scanners Locally
+## Running Individual Scanners
 
-You don't need GitHub Actions to run these. Every scanner works from the command line:
+`scan.sh` orchestrates everything. But you can also run scanners directly:
 
 ```bash
-# Secrets in git history
-gitleaks detect --source .
-
-# Static analysis
-semgrep --config p/javascript .
-
-# Dependencies
-trivy fs --severity HIGH,CRITICAL .
-
-# Docker image (build first)
-docker build -t myapp . && trivy image --severity HIGH,CRITICAL myapp
-
-# Config files
-trivy config .
-
-# Runtime (Docker, needs app running)
-export SESSION_SECRET="test"
-node app.js &
-docker run --network host -v $(pwd):/zap/wrk:ro -t zaproxy/zap-stable \
-  zap-baseline.py -t http://localhost:3000
-```
+gitleaks detect --source .                                          # secrets
+semgrep --config p/javascript .                                     # SAST  
+trivy fs --severity HIGH,CRITICAL .                                 # SCA
+docker build -t app . && trivy image --severity HIGH,CRITICAL app   # container
+trivy config .                                                      # IaC
+./scan.sh . --with-dast                                             # DAST (via scan.sh)
 
 ---
 
@@ -209,7 +248,9 @@ These are noted in the threat model but not implemented. Good first contribution
 ## Project Structure
 
 ```
-├── app.js                          # The app (vulnerable → secured across 6 commits)
+├── scan.sh                         # ⭐ Universal scanner — ./scan.sh /any/repo
+├── .sec-sdlc.yml                   # Per-project config (drop this in any repo)
+├── app.js                          # Example app (vulnerable → secured across 6 commits)
 ├── Dockerfile                      # Multi-stage, non-root, npm removed
 ├── threat-model/
 │   └── THREAT-MODEL.md             # 7 STRIDE threats, scored and prioritized
