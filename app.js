@@ -1,23 +1,32 @@
 // ============================================================
-// TASKBOARD — Step 1: Vulnerable Baseline
+// TASKBOARD — Step 3: Fix SQL Injection + Plaintext Passwords
 // ============================================================
-// This version is intentionally vulnerable. Do NOT use in production.
-// Each vulnerability will be fixed in subsequent steps:
+// Fixed:
+//   ✅ Parameterized queries — SQL injection blocked
+//   ✅ bcrypt password hashing — plaintext passwords gone
+//   ✅ SESSION_SECRET from env — no hardcoded secret
 //
-//   ❌ Plaintext passwords in database
-//   ❌ SQL injection via string concatenation
-//   ❌ No session security (no HttpOnly, no regeneration)
-//   ❌ No RBAC — any logged-in user can access /admin
-//   ❌ No security headers
-//   ❌ x-powered-by header exposed
+// Still vulnerable (will fix in later steps):
+//   ❌ No RBAC — any logged-in user can still access /admin
+//   ❌ No session regeneration after login
+//   ❌ Session cookie missing HttpOnly, secure, sameSite
+//   ❌ No security headers (X-Powered-By still exposed)
 // ============================================================
 
 const sqlite3 = require("sqlite3").verbose();
 const express = require("express");
+const bcrypt = require("bcrypt");
 const session = require("express-session");
 
 const app = express();
 const PORT = 3000;
+const SALT_ROUNDS = 12;
+
+// ✅ FIXED: Secret from environment, not hardcoded
+if (!process.env.SESSION_SECRET) {
+    console.error("SESSION_SECRET environment variable is required");
+    process.exit(1);
+}
 
 // ── Database Setup ──────────────────────────────────────────
 const db = new sqlite3.Database("./taskboard.db");
@@ -26,33 +35,44 @@ db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            password TEXT,
+            username TEXT UNIQUE,
+            password TEXT,    -- ✅ Now stores bcrypt hash, not plaintext
             role TEXT
         )
     `);
 
-    // ⚠️ VULNERABILITY: Plaintext passwords
-    db.run(`
-        INSERT OR IGNORE INTO users (id, username, password, role)
-        VALUES (1, 'admin', 'admin123', 'admin')
-    `);
-    db.run(`
-        INSERT OR IGNORE INTO users (id, username, password, role)
-        VALUES (2, 'user', 'user123', 'user')
-    `);
+    // ✅ FIXED: Passwords hashed with bcrypt before storage
+    createDefaultUsers();
 });
+
+async function createDefaultUsers() {
+    try {
+        const adminHash = await bcrypt.hash("admin123", SALT_ROUNDS);
+        const userHash = await bcrypt.hash("user123", SALT_ROUNDS);
+
+        db.run(
+            `INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)`,
+            [1, "admin", adminHash, "admin"]
+        );
+        db.run(
+            `INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)`,
+            [2, "user", userHash, "user"]
+        );
+    } catch (err) {
+        console.error("Failed to create default users:", err.message);
+    }
+}
 
 // ── Middleware ──────────────────────────────────────────────
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// ⚠️ VULNERABILITY: Session missing HttpOnly, secure, sameSite
+// ⚠️ STILL VULNERABLE: Cookie flags not set yet
 app.use(
     session({
-        secret: "hardcoded-insecure-secret",
+        secret: process.env.SESSION_SECRET,
         resave: false,
-        saveUninitialized: true,
+        saveUninitialized: true,  // ⚠️ Will fix in Step 5
     })
 );
 
@@ -71,41 +91,50 @@ app.get("/", (req, res) => {
     `);
 });
 
-// ⚠️ VULNERABILITY: SQL injection via string concatenation
-// ⚠️ VULNERABILITY: Plaintext password comparison
+// ✅ FIXED: Parameterized query + bcrypt comparison
 app.post("/login", (req, res) => {
     const { username, password } = req.body;
 
-    const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
+    // ✅ Parameterized query — SQL injection impossible
+    db.get(
+        "SELECT * FROM users WHERE username = ?",
+        [username],
+        async (err, user) => {
+            if (err) {
+                return res.status(500).send("Database error");
+            }
 
-    db.get(query, (err, user) => {
-        if (err) {
-            return res.status(500).send("Database error");
+            if (!user) {
+                return res.status(401).send("Invalid credentials");
+            }
+
+            // ✅ bcrypt comparison — compares hash, not plaintext
+            const valid = await bcrypt.compare(password, user.password);
+
+            if (!valid) {
+                return res.status(401).send("Invalid credentials");
+            }
+
+            // ⚠️ STILL VULNERABLE: No session regeneration
+            req.session.user = {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+            };
+
+            res.send(`
+                <h2>Welcome ${user.username}</h2>
+                <p>Role: ${user.role}</p>
+                <a href="/admin">Admin Dashboard</a><br><br>
+                <form action="/logout" method="POST">
+                    <button>Logout</button>
+                </form>
+            `);
         }
-
-        if (!user) {
-            return res.status(401).send("Invalid credentials");
-        }
-
-        // ⚠️ VULNERABILITY: No session regeneration after login
-        req.session.user = {
-            id: user.id,
-            username: user.username,
-            role: user.role,
-        };
-
-        res.send(`
-            <h2>Welcome ${user.username}</h2>
-            <p>Role: ${user.role}</p>
-            <a href="/admin">Admin Dashboard</a><br><br>
-            <form action="/logout" method="POST">
-                <button>Logout</button>
-            </form>
-        `);
-    });
+    );
 });
 
-// ⚠️ VULNERABILITY: No authorization check — any logged-in user can access
+// ⚠️ STILL VULNERABLE: No RBAC — any logged-in user can access /admin
 app.get("/admin", (req, res) => {
     if (!req.session.user) {
         return res.status(401).send("Authentication required");
