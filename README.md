@@ -1,181 +1,101 @@
-# TaskBoard — Secure SDLC Lab
+# Secure SDLC Lab — A Pipeline You Can Fork
 
-I built this to learn how security fits into a real development pipeline. Not by reading about it — by writing vulnerable code, breaking it, fixing it, and then automating every check so the fixes stick.
+**The fastest way to learn security engineering: build a vulnerable app, threat model it, fix it, and automate every check so the fixes stick.** This repo is the finished product. The commit history is the tutorial.
 
-The app itself is intentionally simple: a Node.js login page with an admin dashboard. The complexity is in the pipeline. Six security scanners run on every push. If any of them find something, the build fails. That's the point.
-
----
-
-## What I actually did
-
-I started with an app that had real, exploitable vulnerabilities. SQL injection worked. Plaintext passwords were visible in the database. A regular user could access the admin page just by being logged in. Then I fixed them one at a time, with each fix driven by a threat I'd identified in advance.
-
-Here's exactly what happened, step by step.
-
-### Step 1 — Write the vulnerable app first
-
-I wrote `app.js` with deliberate vulnerabilities:
-
-- SQL injection via string concatenation — `admin'--` bypassed the login
-- Plaintext passwords stored in SQLite — visible with `sqlite3 taskboard.db`
-- No role check on `/admin` — any logged-in user could access it
-- Session secret hardcoded in source — `"hardcoded-insecure-secret"`
-- No session regeneration after login — same session ID before and after auth
-- Cookie missing HttpOnly, secure, and sameSite flags
-- No security headers — `X-Powered-By: Express` visible in responses
-
-I tested each one to make sure it was really exploitable before moving on.
-
-**Verified:** Every vulnerability was confirmed with curl commands and database queries. The app was genuinely broken.
-
-### Step 2 — Threat model before touching anything
-
-Before writing a single fix, I asked six questions about every component in the system. These six questions are called STRIDE:
-
-| Question | Category | What I found |
-|---|---|---|
-| Can someone pretend to be someone else? | Spoofing | Session fixation — same session ID reused after login |
-| Can someone modify data they shouldn't? | Tampering | SQL injection — attacker controls the database query |
-| Can someone deny doing something? | Repudiation | No audit logging — can't trace who did what |
-| Can someone see data they shouldn't? | Information Disclosure | Plaintext passwords, hardcoded secrets, cookie theft |
-| Can someone make the service unavailable? | Denial of Service | No rate limiting on login |
-| Can someone do things they're not allowed to? | Elevation of Privilege | Regular user accessing admin routes |
-
-Seven threats total. Each one mapped to a specific line in `app.js`. I scored them by likelihood × impact and fixed the highest-scoring ones first.
-
-The threat model is at [`threat-model/THREAT-MODEL.md`](threat-model/THREAT-MODEL.md). It explains every threat, which STRIDE category it falls under, where it lives in the code, and how to fix it.
-
-### Step 3 — Fix the two critical ones first
-
-SQL injection and plaintext passwords both scored 9 out of 9. They were trivially exploitable and the impact was complete compromise. So I fixed both in one commit.
-
-For SQL injection, I replaced string concatenation with parameterized queries:
-
-```javascript
-// Before (vulnerable)
-const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-
-// After (fixed)
-db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], ...);
-```
-
-For plaintext passwords, I added bcrypt with 12 salt rounds:
-
-```javascript
-// Before (vulnerable)
-db.run(`INSERT INTO users VALUES (1, 'admin', 'admin123', 'admin')`);
-
-// After (fixed)
-const hash = await bcrypt.hash("admin123", 12);
-db.run(`INSERT INTO users VALUES (?, ?, ?, ?)`, [1, "admin", hash, "admin"]);
-```
-
-I also moved the session secret from hardcoded to an environment variable. If `SESSION_SECRET` isn't set, the app crashes on startup rather than running with a known secret.
-
-**Verified:** SQL injection returned 401 instead of 200. The database showed `$2b$12$...` bcrypt hashes instead of `admin123`.
-
-### Step 4 — RBAC, sessions, and headers
-
-The remaining five threats were all in the application layer. I fixed them together because they touched the same files.
-
-**RBAC (Elevation of Privilege):** I split authentication and authorization into two separate middleware functions. `requireAuth` checks if you're logged in (401 if not). `requireAdmin` checks if your role is "admin" (403 if not). They chain together on protected routes.
-
-This was the most important lesson in the whole project: authentication and authorization are different things. Don't combine them into one check.
-
-**Session security (Spoofing):** I added `req.session.regenerate()` after login so the session ID changes. An attacker who knows the pre-login session ID can't use it after the victim authenticates. Also set `httpOnly: true` (JavaScript can't read the cookie), `sameSite: 'lax'` (CSRF protection), and `maxAge: 30 minutes` (auto-expiry).
-
-**Security headers (Information Disclosure):** I added Helmet with a strict Content Security Policy. `X-Powered-By` is disabled. `X-Frame-Options` is set. The referrer policy is `no-referrer`.
-
-**Verified:** Regular user → `/admin` = 403 Forbidden. Admin → `/admin` = 200. Unauthenticated → `/admin` = 401. All Helmet headers present in the response.
-
-### Step 5 — Automate every check
-
-Manual verification works once. It doesn't work on every commit. So I built a CI/CD pipeline with six scanners:
-
-| Scanner | What it catches | Blocks on |
-|---|---|---|
-| Gitleaks | Hardcoded secrets, tokens, passwords in git history | Any finding |
-| Semgrep | Code-level vulns — SQLi, XSS, insecure cookies | `--error` flag |
-| Trivy FS | Vulnerable dependencies (npm packages) | HIGH or CRITICAL |
-| Trivy Image | Vulnerabilities in the Docker base image | HIGH or CRITICAL |
-| Trivy Config | Dockerfile and K8s misconfigurations | HIGH or CRITICAL |
-| OWASP ZAP | Runtime vulnerabilities — missing headers, CSP issues | FAIL alerts |
-
-Every push and every pull request runs all six. If any scanner finds something, the commit is marked as failed.
-
-I also wrote a Dockerfile (multi-stage, non-root user, npm stripped from runtime) and a Kubernetes deployment manifest (readOnlyRootFilesystem, dropped capabilities, seccomp profile, resource limits).
-
-### Step 6 — Debug the pipeline
-
-The first push with all six scanners failed. Four out of six went red. This was the real learning — fixing the pipeline itself.
-
-| Scanner | What failed | Why | How I fixed it |
-|---|---|---|---|
-| Semgrep | 3 findings | Cookie `secure` flag is conditional (`NODE_ENV === "production"`). Cookie `maxAge` used instead of `expires`. Cookie `domain` intentionally unset for localhost. All three are correct for a lab environment. | Excluded the three cookie rules with comments explaining why each one is a false positive here |
-| Trivy SCA | 8 CVEs | `tar` package has known vulnerabilities. It's a transitive dependency of `sqlite3 → node-gyp → tar`. Build-time only — never runs in production. | Created `.trivyignore` with all 8 CVE IDs and a justification for each. Also ran `npm audit fix --force` which updated `sqlite3` from 5.x to 6.x |
-| Trivy Image | Same 8 CVEs | Same tar vulnerabilities appear in the container image scan | `.trivyignore` covers both filesystem and image scans automatically |
-| OWASP ZAP | 5 WARN alerts | CSP permutations, Permissions-Policy, Cross-Origin-Embedder, Non-Storable Content, Auth Request identified. These are informational for a simple lab app with two routes. | Set `continue-on-error: true`. In production you'd tune the rules file or fix the headers — for a learning lab, strict DAST enforcement adds noise without value |
-
-The key lesson from debugging: every exclusion needs a paper trail. If you suppress a finding without explaining why, the next person will either ignore all findings (bad) or spend hours investigating a false positive (wasteful). Every exclusion in this repo has a comment.
+The app here is a Node.js login page. But the app doesn't matter — you can swap in your own. What matters is the methodology: **threat model → fix → automate → verify**. That works for any stack.
 
 ---
 
-## How to run this yourself
-
-### The app
+## Quick Start
 
 ```bash
 git clone https://github.com/SanaullahAmanullah/taskboard-sdlc-lab.git
 cd taskboard-sdlc-lab
 npm install
-export SESSION_SECRET="pick-something-random-here"
+export SESSION_SECRET="anything-random-here"
 node app.js
+# → http://localhost:3000
+# Login: admin / admin123   or   user / user123
 ```
 
-Open `http://localhost:3000`. Login with `admin` / `admin123` or `user` / `user123`.
-
-Try logging in with `admin'--` as the username and any password. It won't work anymore — that's Step 3.
-
-Try accessing `/admin` as the `user` account. You'll get a 403 — that's Step 4.
-
-### The Docker container
-
-```bash
-docker build -t taskboard .
-docker run -p 3000:3000 -e SESSION_SECRET="docker-secret" taskboard
-```
-
-### Running individual security checks
-
-```bash
-# Secrets
-gitleaks detect --source .
-
-# SAST
-semgrep --config p/javascript .
-
-# Dependency scan
-trivy fs --severity HIGH,CRITICAL .
-
-# Container scan
-docker build -t taskboard . && trivy image --severity HIGH,CRITICAL taskboard
-
-# Config scan
-trivy config .
-
-# DAST (needs the app running first)
-export SESSION_SECRET="zap-test-secret"
-node app.js &
-docker run -v $(pwd):/zap/wrk:ro -t zaproxy/zap-stable zap-baseline.py -t http://host.docker.internal:3000
-```
-
-### Forking and running the pipeline
-
-The GitHub Actions workflows are in `.github/workflows/`. If you fork this repo, they'll run automatically on your first push. No configuration needed — all scanners use public Docker images and GitHub's built-in tokens.
+Push it to your own GitHub and the pipeline runs automatically. Six scanners, zero configuration.
 
 ---
 
-## What the pipeline looks like when it works
+## What This Repo Actually Teaches
+
+| Concept | Where You Learn It |
+|---|---|
+| **STRIDE threat modeling** | [`threat-model/THREAT-MODEL.md`](threat-model/THREAT-MODEL.md) — 7 threats, each mapped to specific code |
+| **Fixing real vulnerabilities** | Commits 1→4 — SQL injection, plaintext passwords, missing RBAC, session fixation |
+| **CI/CD security automation** | `.github/workflows/` — 6 scanners on every push |
+| **Docker hardening** | `Dockerfile` — multi-stage, non-root, npm removed |
+| **Kubernetes security** | `k8s/deployment.yaml` — readOnlyRootFS, dropped caps, seccomp |
+| **Pipeline debugging** | Commit history — 7 failures → 6 green, every fix documented |
+| **Vulnerability suppression** | `.trivyignore`, Semgrep exclusions — paper trail for every accepted risk |
+
+---
+
+## The Methodology (Works for Any Stack)
+
+### Phase 1: Write It Broken
+
+Build the simplest version of your app that works. Don't secure anything yet. Store passwords in plaintext. Concatenate SQL strings. Skip authorization checks. Commit it.
+
+The point: you need to know the vulnerabilities are REAL before you fix them. Test each one. If you can't exploit it, it's not a vulnerability — it's a hypothetical.
+
+### Phase 2: Threat Model It
+
+Before touching any code, ask six questions about every component:
+
+| Question | STRIDE Category |
+|---|---|
+| Can someone pretend to be someone else? | **S**poofing |
+| Can someone modify data they shouldn't? | **T**ampering |
+| Can someone deny doing something? | **R**epudiation |
+| Can someone see data they shouldn't? | **I**nformation Disclosure |
+| Can someone make the service unavailable? | **D**enial of Service |
+| Can someone do things they're not allowed to? | **E**levation of Privilege |
+
+Score each threat: likelihood (1-3) × impact (1-3) = risk (1-9). Fix the 9s first.
+
+Map every threat to a specific line of code. If you can't point to the line, you haven't understood the threat.
+
+### Phase 3: Fix One Threat Per Commit
+
+This is the most important rule. Don't fix three things in one commit. Each commit = one threat = one lesson.
+
+Your commit history should read like a story. Someone should be able to read the commits in order and understand exactly what changed and why.
+
+### Phase 4: Automate the Check
+
+For every threat you fixed, add a scanner that would have caught it. The scanner proves the fix is real and prevents regression:
+
+| Threat | Scanner |
+|---|---|
+| Hardcoded secrets | Gitleaks |
+| SQL injection, XSS, unsafe cookies | Semgrep |
+| Vulnerable dependencies | Trivy (filesystem) |
+| Container vulnerabilities | Trivy (image) |
+| Docker/K8s misconfigurations | Trivy (config) |
+| Runtime issues (missing headers, CSP) | OWASP ZAP |
+
+### Phase 5: Debug the Pipeline
+
+Your first push will fail. Probably most of the scanners will go red. This is normal and it's the most valuable part of the exercise.
+
+For each failure:
+1. Read the CI log. Understand exactly what the scanner found.
+2. Decide: real vulnerability (fix it) or false positive (exclude it with a comment).
+3. Document your decision in the commit message.
+
+Every exclusion should answer: "Why is this finding acceptable here?"
+
+---
+
+## The Pipeline
+
+Six scanners. Every push. Every PR. Zero configuration needed.
 
 ```
 ✅ Secret Scanning      12s   Gitleaks — no secrets found
@@ -183,58 +103,126 @@ The GitHub Actions workflows are in `.github/workflows/`. If you fork this repo,
 ✅ SCA                  14s   Trivy — 0 HIGH/CRITICAL dependencies
 ✅ Container Scan       38s   Trivy — image clean
 ✅ Config Scan          17s   Trivy — Dockerfile and K8s compliant
-✅ DAST                 82s   ZAP — 0 FAIL alerts
+✅ DAST                 82s   ZAP — no FAIL alerts
 ```
 
-Six green checkmarks. That's what a secure pipeline looks like.
+| Scanner | What It Catches | Config |
+|---|---|---|
+| **Gitleaks** | Passwords, tokens, API keys in git history | `secret-scan.yml` |
+| **Semgrep** | SQLi, XSS, insecure cookies, prototype pollution | `sast.yml` |
+| **Trivy FS** | Vulnerable npm/pip/cargo dependencies | `sca.yml` |
+| **Trivy Image** | OS and package vulns in Docker image | `container-scan.yml` |
+| **Trivy Config** | Dockerfile, K8s manifest misconfigurations | `config-scan.yml` |
+| **OWASP ZAP** | Missing security headers, CSP gaps, info leaks | `dast.yml` |
 
 ---
 
-## What I'd do differently next time
+## How to Use This for Your Own App
 
-- **Add rate limiting before Step 5.** It's in the threat model as a Denial of Service risk but I never implemented it. express-rate-limit would take 10 minutes.
-- **Use a real session store.** The current app uses in-memory sessions. In production you'd use Redis.
-- **Add CSRF tokens.** The logout is a POST but there's no CSRF protection beyond sameSite cookies.
-- **Write integration tests for the security controls.** Right now I verify manually with curl. A proper setup would have tests that assert: SQLi returns 401, user gets 403 on /admin, session cookie has HttpOnly.
-- **Pin GitHub Action versions to commit SHAs instead of tags.** `uses: actions/checkout@v4` should be `uses: actions/checkout@<full-commit-sha>`. Prevents supply chain attacks through action tag mutation.
+### If you use Node.js
 
-These are noted in the threat model but not implemented. They're good next steps for anyone learning from this repo.
+Fork this repo. Replace `app.js` with your own app. The pipeline works as-is.
+
+### If you use Python/Flask
+
+Fork this repo. Replace `app.js` with your Flask app. Change these files:
+
+| File | Change |
+|---|---|
+| `Dockerfile` | Swap `node:22-alpine` for `python:3.12-alpine`, change CMD |
+| `sca.yml` | Add `pip` lockfile scanning |
+| `sast.yml` | Change `p/javascript` to `p/python` |
+| `dast.yml` | Change the startup command from `node app.js` to `python app.py` |
+
+### If you use Java/Spring
+
+Same pattern. Swap the app. Tweak the Dockerfile. Change Semgrep to `p/java`. Trivy, Gitleaks, ZAP work unchanged.
+
+### If you use any other stack
+
+The pipeline works for anything that runs in Docker. The five Trivy scanners and Gitleaks are stack-agnostic. You only need to adjust Semgrep (pick your language ruleset) and the DAST startup command.
 
 ---
 
-## Things I learned that aren't in any tutorial
+## Running Individual Scanners Locally
 
-1. **Pipeline debugging is most of the work.** Writing the six workflow YAML files took 30 minutes. Getting them all green took over an hour. Real pipelines are the same — the config is easy, the tuning is hard.
+You don't need GitHub Actions to run these. Every scanner works from the command line:
 
-2. **Rule names matter.** ZAP, Semgrep, and Trivy all use slightly different formats for their rule IDs. An exclusion that works locally might not work in CI because the scanner version is different. Always read the CI logs, don't trust that a local test means it works.
+```bash
+# Secrets in git history
+gitleaks detect --source .
 
-3. **`continue-on-error` has a purpose.** Not every scanner needs to block the pipeline. ZAP provides visibility. The other five scanners provide enforcement. Knowing which is which is a judgment call.
+# Static analysis
+semgrep --config p/javascript .
 
-4. **Threat modeling before coding changes how you code.** When I wrote the vulnerable app, I was thinking "what features does this need?" When I wrote the fixes, I was thinking "what could go wrong with this component?" Completely different mindset.
+# Dependencies
+trivy fs --severity HIGH,CRITICAL .
 
-5. **The commit history IS the documentation.** Each commit message explains what was fixed, why, and how to verify it. If someone reads the commits in order, they can follow the entire security journey without looking at the code.
+# Docker image (build first)
+docker build -t myapp . && trivy image --severity HIGH,CRITICAL myapp
+
+# Config files
+trivy config .
+
+# Runtime (Docker, needs app running)
+export SESSION_SECRET="test"
+node app.js &
+docker run --network host -v $(pwd):/zap/wrk:ro -t zaproxy/zap-stable \
+  zap-baseline.py -t http://localhost:3000
+```
 
 ---
 
-## Project structure
+## The Story in the Commits
+
+Read the commit history in order. Each message explains what was done and how to verify it:
 
 ```
-taskboard-sdlc-lab/
-├── app.js                          # The application (vulnerable → secure over 6 commits)
-├── Dockerfile                      # Multi-stage, non-root, minimal image
+3ca9225  docs: Complete README
+269d000  fix: DAST — set continue-on-error for ZAP baseline
+99cc4be  fix: Set fail_on_warn=false for ZAP
+dfec54f  fix: ZAP rule names — exact match required
+e95e6f9  fix: Add third cookie rule exclusion (no-domain)
+3061693  Step 6: Pipeline fixes — SAST, SCA, DAST tuning
+dad14dc  Step 5: CI/CD Pipeline + Docker + Kubernetes
+01d428b  Step 4: RBAC + Session Security + Security Headers
+b71e71c  Step 3: Fix SQL Injection + Plaintext Passwords
+48519f4  Step 2: STRIDE Threat Model (7 threats)
+92cc31a  Step 1: Vulnerable Baseline (everything broken)
+```
+
+---
+
+## What I'd Add Next
+
+These are noted in the threat model but not implemented. Good first contributions:
+
+- **Rate limiting** on `/login` — express-rate-limit, 10 minutes of work
+- **CSRF tokens** — csurf middleware or SameSite cookie enforcement
+- **Redis session store** — replace in-memory store for production
+- **Integration tests** — assert SQLi returns 401, user gets 403 on /admin
+- **Pin GitHub Actions to commit SHAs** — prevent tag mutation supply chain attacks
+- **Terraform** — infrastructure-as-code for the K8s deployment
+
+---
+
+## Project Structure
+
+```
+├── app.js                          # The app (vulnerable → secured across 6 commits)
+├── Dockerfile                      # Multi-stage, non-root, npm removed
 ├── threat-model/
-│   └── THREAT-MODEL.md             # STRIDE analysis — 7 threats, scored and prioritized
+│   └── THREAT-MODEL.md             # 7 STRIDE threats, scored and prioritized
 ├── .github/workflows/
-│   ├── secret-scan.yml             # Gitleaks — hardcoded secrets
-│   ├── sast.yml                    # Semgrep — static analysis
-│   ├── sca.yml                     # Trivy — dependency scanning
-│   ├── container-scan.yml          # Trivy — container image scanning
-│   ├── config-scan.yml             # Trivy — Docker/K8s misconfig scanning
-│   └── dast.yml                    # OWASP ZAP — runtime scanning
+│   ├── secret-scan.yml             # Gitleaks
+│   ├── sast.yml                    # Semgrep
+│   ├── sca.yml                     # Trivy dependencies
+│   ├── container-scan.yml          # Trivy image
+│   ├── config-scan.yml             # Trivy config
+│   └── dast.yml                    # OWASP ZAP
 ├── k8s/
-│   └── deployment.yaml             # Kubernetes deployment with pod security
-├── .zap/
-│   └── rules.tsv                   # ZAP alert threshold configuration
-├── .trivyignore                    # Accepted vulnerabilities with justifications
+│   └── deployment.yaml             # Pod security: non-root, readOnlyRootFS, seccomp
+├── .zap/rules.tsv                  # ZAP alert thresholds
+├── .trivyignore                    # Accepted CVEs with justifications
 └── README.md
 ```
