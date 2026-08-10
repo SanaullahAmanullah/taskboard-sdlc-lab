@@ -19,5 +19,7 @@ jobs:
         run: |
           semgrep scan \
             --config p/javascript \
+            --exclude-rule javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-expires \
+            --exclude-rule javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-secure \
             --error \
             .

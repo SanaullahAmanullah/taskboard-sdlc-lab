@@ -1,0 +1,19 @@
+# ============================================================
+# Trivy Vulnerability Suppressions
+# ============================================================
+# Format: <CVE-ID>  # <reason>
+#
+# Each suppression is reviewed and justified.
+# These are accepted risks for a learning lab, not production.
+
+# === Build-time only (tar — transitive dep of sqlite3 → node-gyp) ===
+# tar is ONLY used during npm install to extract packages.
+# Never exposed at runtime. These CVEs don't affect running TaskBoard.
+CVE-2026-59873  # tar: DoS via crafted gzip bomb — build-time, not runtime
+CVE-2026-23745  # tar: Arbitrary file overwrite — build-time, not runtime
+CVE-2026-23950  # tar: Arbitrary file overwrite — build-time, not runtime
+CVE-2026-24842  # tar: Arbitrary file creation — build-time, not runtime
+CVE-2026-26960  # tar: Arbitrary file read/write — build-time, not runtime
+CVE-2026-29786  # tar: Hardlink path traversal — build-time, not runtime
+CVE-2026-31802  # tar: File overwrite via symlink — build-time, not runtime
+CVE-2026-59874  # tar: DoS via malformed archive — build-time, not runtime

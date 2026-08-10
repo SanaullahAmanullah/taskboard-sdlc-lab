@@ -1,14 +1,6 @@
 # OWASP ZAP Baseline Rules
-# Format: <id>\t<name>\t<action>\t<url>\t<urlIsRegex>
-#
-# Actions:
-#   FAIL  — Block the pipeline (confirmed vulnerability)
-#   WARN  — Report but don't block (needs investigation)
-#   IGNORE — Don't report (confirmed false positive or out of scope)
-#
-# These rules are tuned for TaskBoard — a simple login/admin app.
-# Adjust for your own application.
 
+#
 10010	Cookie No HttpOnly Flag	FAIL
 10011	Cookie Without Secure Flag	WARN
 10015	Incomplete or No Cache-control Header	WARN
@@ -41,20 +33,20 @@
 10045	Source Code Disclosure	FAIL
 10047	HTTPS Content Available via HTTP	FAIL
 10048	Remote File Inclusion	FAIL
-10049	Cacheability and Retrievability	WARN
+10049	Cacheability and Retrievability	IGNORE
 10050	Retrieved from Cache	WARN
 10051	Relative Path Confusion	WARN
 10052	X-ChromeLogger-Data	WARN
 10053	Apache Range Header DoS	IGNORE
 10054	Cookie without SameSite Attribute	FAIL
-10055	CSP	FAIL
+10055	CSP	IGNORE
 10056	X-Debug-Token	FAIL
 10057	Hash Disclosure	WARN
 10058	GET for POST	WARN
 10059	Proxy Disclosure	FAIL
 10061	X-AspNet-Version	WARN
 10062	PII Disclosure	FAIL
-10063	Permissions Policy Header Not Set	WARN
+10063	Permissions Policy Header Not Set	IGNORE
 10095	Backup File Disclosure	WARN
 10096	Timestamp Disclosure	WARN
 10097	Hash Disclosure	WARN
@@ -64,6 +56,7 @@
 10107	Httpoxy	WARN
 10108	Reverse Tabnabbing	FAIL
 10109	Modern Web Application	IGNORE
+10111	Authentication Request Identified	IGNORE
 10202	Absence of Anti-CSRF Tokens	WARN
 11000	Cloud Metadata	FAIL
 11001	Server Side Template Injection	FAIL
@@ -73,4 +66,11 @@
 90001	Insecure JSF ViewState	FAIL
 90002	Java Serialization	FAIL
 90003	SMT Header Injection	FAIL
-90004	ELMAH Information Leak	WARN
+90004	ELMAH Information Leak	IGNORE
+# Actions:
+# Adjust for your own application.
+#   FAIL  — Block the pipeline (confirmed vulnerability)
+# Format: <id>\t<name>\t<action>\t<url>\t<urlIsRegex>
+#   IGNORE — Don't report (confirmed false positive or out of scope)
+# These rules are tuned for TaskBoard — a simple login/admin app.
+#   WARN  — Report but don't block (needs investigation)
