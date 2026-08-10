@@ -1,0 +1,39 @@
+# Secure SDLC — Scanner Configuration
+# Drop this file in the root of any repo to customize the scan.
+# All fields are optional — missing values auto-detect.
+
+# Override auto-detected language (javascript, python, java, php, go, ruby, rust, csharp, generic)
+# language: python
+
+# Semgrep rule exclusions (false positives you've reviewed and accepted)
+semgrep:
+  exclude_rules:
+    - javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-expires
+    - javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-secure
+    - javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-domain
+
+# Trivy configuration
+trivy:
+  severity: HIGH,CRITICAL
+  ignore_unfixed: true
+
+# Accepted CVEs (build-time only, transitive deps, etc.)
+# Format: CVE-ID: reason
+trivy_ignore:
+  - "CVE-2026-59873: tar DoS via gzip bomb — build-time transitive dep"
+  - "CVE-2026-23745: tar arbitrary file overwrite — build-time transitive dep"
+
+# Scanners to skip (uncomment to disable)
+# skip:
+#   - secret-scan
+#   - sast
+#   - sca
+#   - container-scan
+#   - config-scan
+#   - dast
+
+# DAST configuration (required if using --with-dast)
+# dast:
+#   start_command: "python3 app.py"
+#   target_url: "http://localhost:5000"
+#   zap_rules: ".zap/rules.tsv"
