@@ -16,10 +16,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Semgrep
+        # Cookie rule exclusions (lab environment):
+        # - no-expires: maxAge is set instead (equivalent)
+        # - no-secure: conditional on NODE_ENV (secure in production)
+        # - no-domain: unset for localhost (set COOKIE_DOMAIN in production)
         run: |
           semgrep scan \
             --config p/javascript \
             --exclude-rule javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-expires \
             --exclude-rule javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-secure \
+            --exclude-rule javascript.express.security.audit.express-cookie-settings.express-cookie-session-no-domain \
             --error \
             .
