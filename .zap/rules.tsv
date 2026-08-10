@@ -1,0 +1,76 @@
+# OWASP ZAP Baseline Rules
+# Format: <id>\t<name>\t<action>\t<url>\t<urlIsRegex>
+#
+# Actions:
+#   FAIL  — Block the pipeline (confirmed vulnerability)
+#   WARN  — Report but don't block (needs investigation)
+#   IGNORE — Don't report (confirmed false positive or out of scope)
+#
+# These rules are tuned for TaskBoard — a simple login/admin app.
+# Adjust for your own application.
+
+10010	Cookie No HttpOnly Flag	FAIL
+10011	Cookie Without Secure Flag	WARN
+10015	Incomplete or No Cache-control Header	WARN
+10016	Web Browser XSS Protection Not Enabled	WARN
+10017	Cross-Domain JavaScript Source File Inclusion	WARN
+10019	Content-Type Header Missing	FAIL
+10020	Anti-clickjacking Header	FAIL
+10021	X-Content-Type-Options Header Missing	FAIL
+10023	Information Disclosure - Debug Error Messages	FAIL
+10024	Information Disclosure - Sensitive Information in URL	WARN
+10025	Information Disclosure - Sensitive Information in HTTP Referrer	WARN
+10026	HTTP Parameter Override	WARN
+10027	Information Disclosure - Suspicious Comments	WARN
+10028	Open Redirect	FAIL
+10029	Cookie Poisoning	FAIL
+10030	External Redirect	WARN
+10031	User Controllable HTML Element Attribute	WARN
+10032	Viewstate	IGNORE
+10034	Heartbleed OpenSSL Vulnerability	IGNORE
+10035	Strict-Transport-Security Header	FAIL
+10036	HTTP Server Response Header	WARN
+10037	Server Leaks Information via "X-Powered-By"	FAIL
+10038	Content Security Policy (CSP) Header Not Set	FAIL
+10039	X-Backend-Server Header	WARN
+10040	Secure Pages Include Mixed Content	FAIL
+10041	HTTP to HTTPS Insecure Transition	WARN
+10042	HTTPS to HTTP Insecure Transition	WARN
+10043	User Controllable JavaScript Event	WARN
+10044	Big Redirect	WARN
+10045	Source Code Disclosure	FAIL
+10047	HTTPS Content Available via HTTP	FAIL
+10048	Remote File Inclusion	FAIL
+10049	Cacheability and Retrievability	WARN
+10050	Retrieved from Cache	WARN
+10051	Relative Path Confusion	WARN
+10052	X-ChromeLogger-Data	WARN
+10053	Apache Range Header DoS	IGNORE
+10054	Cookie without SameSite Attribute	FAIL
+10055	CSP	FAIL
+10056	X-Debug-Token	FAIL
+10057	Hash Disclosure	WARN
+10058	GET for POST	WARN
+10059	Proxy Disclosure	FAIL
+10061	X-AspNet-Version	WARN
+10062	PII Disclosure	FAIL
+10063	Permissions Policy Header Not Set	WARN
+10095	Backup File Disclosure	WARN
+10096	Timestamp Disclosure	WARN
+10097	Hash Disclosure	WARN
+10098	Cross-Domain Misconfiguration	FAIL
+10105	Weak Authentication Method	FAIL
+10106	HTTP Only Site	WARN
+10107	Httpoxy	WARN
+10108	Reverse Tabnabbing	FAIL
+10109	Modern Web Application	IGNORE
+10202	Absence of Anti-CSRF Tokens	WARN
+11000	Cloud Metadata	FAIL
+11001	Server Side Template Injection	FAIL
+11002	Server Side Template Injection (Blind)	FAIL
+11003	Padding Oracle	FAIL
+11004	Heartbleed	IGNORE
+90001	Insecure JSF ViewState	FAIL
+90002	Java Serialization	FAIL
+90003	SMT Header Injection	FAIL
+90004	ELMAH Information Leak	WARN

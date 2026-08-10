@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: taskboard
+  namespace: taskboard
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: taskboard
+
+  template:
+    metadata:
+      labels:
+        app: taskboard
+
+    spec:
+      # Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: taskboard
+          image: taskboard:latest
+
+          ports:
+            - containerPort: 3000
+
+          env:
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: taskboard-secrets
+                  key: session-secret
+            - name: NODE_ENV
+              value: "production"
+            - name: DB_PATH
+              value: /data/taskboard.db
+
+          volumeMounts:
+            - name: taskboard-data
+              mountPath: /data
+
+          # Container-level security context
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+      volumes:
+        - name: taskboard-data
+          emptyDir: {}

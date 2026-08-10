@@ -1,0 +1,23 @@
+name: IaC Configuration Scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  trivy-config:
+    name: Trivy — Docker & K8s Misconfig
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan Dockerfile and K8s manifests
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 1
